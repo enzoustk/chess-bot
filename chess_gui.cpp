@@ -10,9 +10,11 @@ ChessGUI::ChessGUI()
       current_state(MENU),
       white_time_seconds(600),  // 10 minutos padrão
       black_time_seconds(600),
+      initial_time_seconds(600),
       game_started(false),
       game_ended(false),
       winner(WHITE),  // Valor padrão, será atualizado
+      player_color(WHITE), // Padrão: jogar com as brancas
       selected_square(NO_SQUARE),
       is_square_selected(false),
       has_last_move(false) {
@@ -105,19 +107,34 @@ Square ChessGUI::get_square_from_mouse(int mouse_x, int mouse_y) const {
         return NO_SQUARE;
     }
     
-    int file = mouse_x / square_size;
-    int rank = 7 - (mouse_y / square_size); // Inverter porque y=0 está no topo
+    int col = mouse_x / square_size;
+    int row = mouse_y / square_size;
+    
+    int file, rank;
+    
+    if (is_white_at_bottom()) {
+        file = col;
+        rank = 7 - row;
+    } else {
+        file = 7 - col;
+        rank = row;
+    }
     
     return ChessBoard::make_square(file, rank);
 }
 
 void ChessGUI::draw_board() {
     int square_size = get_square_size();
+    bool white_bottom = is_white_at_bottom();
     
     for (int rank = 0; rank < 8; rank++) {
         for (int file = 0; file < 8; file++) {
             sf::RectangleShape square(sf::Vector2f(square_size, square_size));
-            square.setPosition(file * square_size, (7 - rank) * square_size);
+            
+            int draw_file = white_bottom ? file : (7 - file);
+            int draw_rank = white_bottom ? rank : (7 - rank);
+            
+            square.setPosition(draw_file * square_size, (7 - draw_rank) * square_size);
             
             // Alternar cores (a1 deve ser escura)
             if ((rank + file) % 2 == 0) {
@@ -269,6 +286,7 @@ void ChessGUI::draw_piece(sf::RenderTarget& target, PieceType pt, Color c, int x
 
 void ChessGUI::draw_pieces() {
     int square_size = get_square_size();
+    bool white_bottom = is_white_at_bottom();
     
     for (int rank = 0; rank < 8; rank++) {
         for (int file = 0; file < 8; file++) {
@@ -277,8 +295,12 @@ void ChessGUI::draw_pieces() {
             
             if (pt != NONE) {
                 Color c = board.get_piece_color(sq);
-                int x = file * square_size;
-                int y = (7 - rank) * square_size;
+                
+                int draw_file = white_bottom ? file : (7 - file);
+                int draw_rank = white_bottom ? rank : (7 - rank);
+                
+                int x = draw_file * square_size;
+                int y = (7 - draw_rank) * square_size;
                 draw_piece(window, pt, c, x, y);
             }
         }
@@ -290,16 +312,20 @@ void ChessGUI::draw_legal_moves() {
     
     int square_size = get_square_size();
     float indicator_radius = square_size * 0.125f;  // 12.5% do tamanho da casa
+    bool white_bottom = is_white_at_bottom();
     
     for (const Move& move : legal_moves_for_selected) {
         int file = ChessBoard::get_file(move.to);
         int rank = ChessBoard::get_rank(move.to);
         
+        int draw_file = white_bottom ? file : (7 - file);
+        int draw_rank = white_bottom ? rank : (7 - rank);
+        
         sf::CircleShape indicator(indicator_radius);
         indicator.setFillColor(legal_move_color);
         indicator.setPosition(
-            file * square_size + square_size / 2 - indicator_radius,
-            (7 - rank) * square_size + square_size / 2 - indicator_radius
+            draw_file * square_size + square_size / 2 - indicator_radius,
+            (7 - draw_rank) * square_size + square_size / 2 - indicator_radius
         );
         
         window.draw(indicator);
@@ -310,15 +336,19 @@ void ChessGUI::draw_last_move() {
     if (!has_last_move) return;
     
     int square_size = get_square_size();
+    bool white_bottom = is_white_at_bottom();
     
     // Destacar casa de origem
     if (last_move.from != NO_SQUARE) {
         int from_file = ChessBoard::get_file(last_move.from);
         int from_rank = ChessBoard::get_rank(last_move.from);
         
+        int draw_file = white_bottom ? from_file : (7 - from_file);
+        int draw_rank = white_bottom ? from_rank : (7 - from_rank);
+        
         sf::RectangleShape highlight_from(sf::Vector2f(square_size, square_size));
         highlight_from.setFillColor(last_move_color);
-        highlight_from.setPosition(from_file * square_size, (7 - from_rank) * square_size);
+        highlight_from.setPosition(draw_file * square_size, (7 - draw_rank) * square_size);
         window.draw(highlight_from);
     }
     
@@ -327,9 +357,12 @@ void ChessGUI::draw_last_move() {
         int to_file = ChessBoard::get_file(last_move.to);
         int to_rank = ChessBoard::get_rank(last_move.to);
         
+        int draw_file = white_bottom ? to_file : (7 - to_file);
+        int draw_rank = white_bottom ? to_rank : (7 - to_rank);
+        
         sf::RectangleShape highlight_to(sf::Vector2f(square_size, square_size));
         highlight_to.setFillColor(last_move_color);
-        highlight_to.setPosition(to_file * square_size, (7 - to_rank) * square_size);
+        highlight_to.setPosition(draw_file * square_size, (7 - draw_rank) * square_size);
         window.draw(highlight_to);
     }
 }
@@ -355,16 +388,21 @@ void ChessGUI::draw_check_indicator() {
         Square king_sq = find_king_square(side_to_move);
         if (king_sq != NO_SQUARE) {
             int square_size = get_square_size();
+            bool white_bottom = is_white_at_bottom();
+            
             int file = ChessBoard::get_file(king_sq);
             int rank = ChessBoard::get_rank(king_sq);
+            
+            int draw_file = white_bottom ? file : (7 - file);
+            int draw_rank = white_bottom ? rank : (7 - rank);
             
             // Desenhar círculo vermelho transparente no centro da casa
             float radius = square_size * 0.4f;  // 40% do tamanho da casa
             sf::CircleShape check_circle(radius);
             check_circle.setFillColor(check_color);
             check_circle.setPosition(
-                file * square_size + (square_size - radius * 2) / 2,
-                (7 - rank) * square_size + (square_size - radius * 2) / 2
+                draw_file * square_size + (square_size - radius * 2) / 2,
+                (7 - draw_rank) * square_size + (square_size - radius * 2) / 2
             );
             
             window.draw(check_circle);
@@ -375,12 +413,17 @@ void ChessGUI::draw_check_indicator() {
 void ChessGUI::draw_highlights() {
     if (is_square_selected && selected_square != NO_SQUARE) {
         int square_size = get_square_size();
+        bool white_bottom = is_white_at_bottom();
+        
         int file = ChessBoard::get_file(selected_square);
         int rank = ChessBoard::get_rank(selected_square);
         
+        int draw_file = white_bottom ? file : (7 - file);
+        int draw_rank = white_bottom ? rank : (7 - rank);
+        
         sf::RectangleShape highlight(sf::Vector2f(square_size, square_size));
         highlight.setFillColor(selected_color);
-        highlight.setPosition(file * square_size, (7 - rank) * square_size);
+        highlight.setPosition(draw_file * square_size, (7 - draw_rank) * square_size);
         
         window.draw(highlight);
     }
@@ -434,6 +477,16 @@ void ChessGUI::update_status_text() {
 }
 
 void ChessGUI::handle_mouse_click(int mouse_x, int mouse_y) {
+    if (current_state == MENU) {
+        handle_menu_click(mouse_x, mouse_y);
+        return;
+    }
+    
+    if (game_ended) {
+        handle_game_over_click(mouse_x, mouse_y);
+        return;
+    }
+
     Square clicked_square = get_square_from_mouse(mouse_x, mouse_y);
     
     if (clicked_square == NO_SQUARE) return;
@@ -601,6 +654,10 @@ void ChessGUI::render() {
         
         // Desenhar relógios e peças capturadas
         draw_clocks_and_captured();
+        
+        if (game_ended) {
+            draw_game_over();
+        }
     }
     
     window.display();
@@ -630,45 +687,137 @@ void ChessGUI::draw_menu() {
     unsigned int button_text_size = static_cast<unsigned int>(22 * scale);
     unsigned int start_text_size = static_cast<unsigned int>(28 * scale);
     
-    // Ajustar offsets para garantir que tudo caiba na tela
-    // Calcular espaço necessário
-    float total_height_needed = (52 * scale) + (20 * scale) + (6 * 55 * scale) + (60 * scale) + 100; // título + subtítulo + 6 botões + botão iniciar + margem
-    float available_height = window_size.y;
+    // Calcular altura total do menu para centralização
+    float title_h = 52 * scale;
+    float subtitle_h = 20 * scale;
+    float color_btn_h = 40 * scale;
+    float time_btn_h = 45 * scale;
+    float start_btn_h = 60 * scale;
     
-    // Se não couber, reduzir espaçamento
-    if (total_height_needed > available_height * 0.9f) {
-        scale = (available_height * 0.9f) / total_height_needed * scale;
+    // Espaçamentos
+    float sp_title_color = 50 * scale;
+    float sp_color_sub_btn = 20 * scale;
+    float sp_color_time = 40 * scale;
+    float sp_time_sub_btn = 20 * scale;
+    float sp_time_btns = 55 * scale; // Inclui altura do botão
+    float sp_time_start = 30 * scale;
+    
+    float total_height = title_h + sp_title_color + subtitle_h + sp_color_sub_btn + color_btn_h + 
+                         sp_color_time + subtitle_h + sp_time_sub_btn + (6 * sp_time_btns) + sp_time_start + start_btn_h;
+                         
+    // Ajustar escala se não couber
+    if (total_height > window_size.y * 0.95f) {
+        scale = scale * (window_size.y * 0.95f) / total_height;
+        // Recalcular alturas com nova escala
+        title_h = 52 * scale;
+        subtitle_h = 20 * scale;
+        color_btn_h = 40 * scale;
+        time_btn_h = 45 * scale;
+        start_btn_h = 60 * scale;
+        sp_title_color = 50 * scale;
+        sp_color_sub_btn = 20 * scale;
+        sp_color_time = 40 * scale;
+        sp_time_sub_btn = 20 * scale;
+        sp_time_btns = 55 * scale;
+        sp_time_start = 30 * scale;
+        
+        // Recalcular tamanhos de fonte
+        title_size = static_cast<unsigned int>(52 * scale);
+        subtitle_size = static_cast<unsigned int>(20 * scale);
+        button_text_size = static_cast<unsigned int>(22 * scale);
+        start_text_size = static_cast<unsigned int>(28 * scale);
+        
+        total_height = window_size.y * 0.95f;
     }
     
-    float title_offset = -std::min(180.0f * scale, available_height * 0.25f);
-    float subtitle_offset = title_offset + 60 * scale;
-    float button_start_y = subtitle_offset + 40 * scale;
-    float button_height = 45 * scale;
-    float button_spacing = 55 * scale;
+    float current_y = center_y - total_height / 2.0f;
+    
     float button_width = 250 * scale;
     float start_width = 240 * scale;
-    float start_height = 60 * scale;
     
     // Título com sombra
     sf::Text title_shadow("Jogo de Xadrez", font, title_size);
     title_shadow.setFillColor(sf::Color(0, 0, 0, 100));
     title_shadow.setStyle(sf::Text::Bold);
     sf::FloatRect title_bounds = title_shadow.getLocalBounds();
-    title_shadow.setPosition(center_x - title_bounds.width / 2 + 3, center_y + title_offset + 3);
+    title_shadow.setPosition(center_x - title_bounds.width / 2 + 3, current_y + 3);
     window.draw(title_shadow);
     
     sf::Text title("Jogo de Xadrez", font, title_size);
     title.setFillColor(sf::Color(240, 240, 240));
     title.setStyle(sf::Text::Bold);
-    title.setPosition(center_x - title_bounds.width / 2, center_y + title_offset);
+    title.setPosition(center_x - title_bounds.width / 2, current_y);
     window.draw(title);
     
+    current_y += title_h + sp_title_color;
+    
+    // --- SELEÇÃO DE COR ---
+    sf::Text color_subtitle("Escolha sua cor", font, subtitle_size);
+    color_subtitle.setFillColor(sf::Color(180, 180, 180));
+    sf::FloatRect color_sub_bounds = color_subtitle.getLocalBounds();
+    color_subtitle.setPosition(center_x - color_sub_bounds.width / 2, current_y);
+    window.draw(color_subtitle);
+    
+    current_y += subtitle_h + sp_color_sub_btn;
+    
+    float color_btn_width = 120 * scale;
+    float color_btn_spacing = 20 * scale;
+    
+    // Botão Brancas
+    sf::RectangleShape white_btn(sf::Vector2f(color_btn_width, color_btn_h));
+    white_btn.setPosition(center_x - color_btn_width - color_btn_spacing / 2, current_y);
+    
+    if (player_color == WHITE) {
+        white_btn.setFillColor(sf::Color(200, 200, 200));
+        white_btn.setOutlineColor(sf::Color(255, 255, 255));
+        white_btn.setOutlineThickness(3 * scale);
+    } else {
+        white_btn.setFillColor(sf::Color(150, 150, 150));
+        white_btn.setOutlineColor(sf::Color(100, 100, 100));
+        white_btn.setOutlineThickness(1 * scale);
+    }
+    window.draw(white_btn);
+    
+    sf::Text white_text("Brancas", font, button_text_size);
+    white_text.setFillColor(sf::Color::Black);
+    sf::FloatRect white_bounds = white_text.getLocalBounds();
+    white_text.setPosition(center_x - color_btn_width - color_btn_spacing / 2 + (color_btn_width - white_bounds.width) / 2,
+                          current_y + (color_btn_h - white_bounds.height) / 2 - 5);
+    window.draw(white_text);
+    
+    // Botão Pretas
+    sf::RectangleShape black_btn(sf::Vector2f(color_btn_width, color_btn_h));
+    black_btn.setPosition(center_x + color_btn_spacing / 2, current_y);
+    
+    if (player_color == BLACK) {
+        black_btn.setFillColor(sf::Color(50, 50, 50));
+        black_btn.setOutlineColor(sf::Color(200, 200, 200));
+        black_btn.setOutlineThickness(3 * scale);
+    } else {
+        black_btn.setFillColor(sf::Color(80, 80, 80));
+        black_btn.setOutlineColor(sf::Color(50, 50, 50));
+        black_btn.setOutlineThickness(1 * scale);
+    }
+    window.draw(black_btn);
+    
+    sf::Text black_text("Pretas", font, button_text_size);
+    black_text.setFillColor(sf::Color::White);
+    sf::FloatRect black_bounds = black_text.getLocalBounds();
+    black_text.setPosition(center_x + color_btn_spacing / 2 + (color_btn_width - black_bounds.width) / 2,
+                          current_y + (color_btn_h - black_bounds.height) / 2 - 5);
+    window.draw(black_text);
+
+    current_y += color_btn_h + sp_color_time;
+
+    // --- SELEÇÃO DE TEMPO ---
     // Subtítulo
     sf::Text subtitle("Selecione o tempo de jogo", font, subtitle_size);
     subtitle.setFillColor(sf::Color(180, 180, 180));
     sf::FloatRect subtitle_bounds = subtitle.getLocalBounds();
-    subtitle.setPosition(center_x - subtitle_bounds.width / 2, center_y + subtitle_offset);
+    subtitle.setPosition(center_x - subtitle_bounds.width / 2, current_y);
     window.draw(subtitle);
+    
+    current_y += subtitle_h + sp_time_sub_btn;
     
     // Opções de tempo
     std::vector<std::pair<std::string, int>> time_options = {
@@ -680,20 +829,18 @@ void ChessGUI::draw_menu() {
         {"30 minutos", 1800}
     };
     
-    float button_y = center_y + button_start_y;
-    
     for (size_t i = 0; i < time_options.size(); i++) {
         bool is_selected = (white_time_seconds == time_options[i].second);
         
         // Sombra do botão
-        sf::RectangleShape button_shadow(sf::Vector2f(button_width, button_height));
-        button_shadow.setPosition(center_x - button_width / 2 + 2, button_y + 2);
+        sf::RectangleShape button_shadow(sf::Vector2f(button_width, time_btn_h));
+        button_shadow.setPosition(center_x - button_width / 2 + 2, current_y + 2);
         button_shadow.setFillColor(sf::Color(0, 0, 0, 80));
         window.draw(button_shadow);
         
         // Botão
-        sf::RectangleShape button(sf::Vector2f(button_width, button_height));
-        button.setPosition(center_x - button_width / 2, button_y);
+        sf::RectangleShape button(sf::Vector2f(button_width, time_btn_h));
+        button.setPosition(center_x - button_width / 2, current_y);
         
         if (is_selected) {
             button.setFillColor(sf::Color(70, 130, 180));  // Azul selecionado
@@ -708,39 +855,31 @@ void ChessGUI::draw_menu() {
         // Texto do botão
         std::ostringstream button_text;
         button_text << time_options[i].first;
-        if (is_selected) {
-            button_text << " [X]";  // Usar [X] ao invés de ✓ para compatibilidade
-        }
+        // if (is_selected) {
+        //     button_text << " [X]"; 
+        // }
         
         sf::Text text(button_text.str(), font, button_text_size);
         text.setFillColor(sf::Color::White);
         text.setStyle(is_selected ? sf::Text::Bold : sf::Text::Regular);
         sf::FloatRect text_bounds = text.getLocalBounds();
-        text.setPosition(center_x - text_bounds.width / 2, button_y + (button_height - text_bounds.height) / 2 - 5);
+        text.setPosition(center_x - text_bounds.width / 2, current_y + (time_btn_h - text_bounds.height) / 2 - 5);
         window.draw(text);
         
-        button_y += button_spacing;
+        current_y += sp_time_btns;
     }
     
-    // Botão iniciar - garantir que caiba na tela
-    float start_x = center_x - start_width / 2;
-    float start_y = button_y + 30 * scale;
-    
-    // Verificar se o botão cabe na tela, se não, ajustar
-    if (start_y + start_height > window_size.y - 20) {
-        // Reduzir espaçamento entre botões se necessário
-        start_y = std::max(button_y + 10 * scale, window_size.y - start_height - 20);
-    }
+    current_y += sp_time_start;
     
     // Sombra do botão iniciar
-    sf::RectangleShape start_shadow(sf::Vector2f(start_width, start_height));
-    start_shadow.setPosition(start_x + 3, start_y + 3);
+    sf::RectangleShape start_shadow(sf::Vector2f(start_width, start_btn_h));
+    start_shadow.setPosition(center_x - start_width / 2 + 3, current_y + 3);
     start_shadow.setFillColor(sf::Color(0, 0, 0, 100));
     window.draw(start_shadow);
     
     // Botão iniciar
-    sf::RectangleShape start_button(sf::Vector2f(start_width, start_height));
-    start_button.setPosition(start_x, start_y);
+    sf::RectangleShape start_button(sf::Vector2f(start_width, start_btn_h));
+    start_button.setPosition(center_x - start_width / 2, current_y);
     start_button.setFillColor(sf::Color(50, 180, 80));
     start_button.setOutlineColor(sf::Color(70, 200, 100));
     start_button.setOutlineThickness(3 * scale);
@@ -751,8 +890,8 @@ void ChessGUI::draw_menu() {
     start_text.setFillColor(sf::Color::White);
     start_text.setStyle(sf::Text::Bold);
     sf::FloatRect start_bounds = start_text.getLocalBounds();
-    start_text.setPosition(start_x + start_width / 2 - start_bounds.width / 2, 
-                          start_y + start_height / 2 - start_bounds.height / 2 - 5);
+    start_text.setPosition(center_x - start_bounds.width / 2, 
+                          current_y + (start_btn_h - start_bounds.height) / 2 - 5);
     window.draw(start_text);
 }
 
@@ -776,20 +915,77 @@ void ChessGUI::handle_menu_click(int mouse_x, int mouse_y) {
         {"30 minutos", 1800}
     };
     
-    // Calcular posições dos botões (mesma lógica do draw_menu)
-    float total_height_needed = (52 * scale) + (20 * scale) + (6 * 55 * scale) + (60 * scale) + 100;
-    float available_height = window_size.y;
-    if (total_height_needed > available_height * 0.9f) {
-        scale = (available_height * 0.9f) / total_height_needed * scale;
+    // Calcular altura total do menu para centralização (mesma lógica do draw_menu)
+    float title_h = 52 * scale;
+    float subtitle_h = 20 * scale;
+    float color_btn_h = 40 * scale;
+    float time_btn_h = 45 * scale;
+    float start_btn_h = 60 * scale;
+    
+    // Espaçamentos
+    float sp_title_color = 50 * scale;
+    float sp_color_sub_btn = 20 * scale;
+    float sp_color_time = 40 * scale;
+    float sp_time_sub_btn = 20 * scale;
+    float sp_time_btns = 55 * scale;
+    float sp_time_start = 30 * scale;
+    
+    float total_height = title_h + sp_title_color + subtitle_h + sp_color_sub_btn + color_btn_h + 
+                         sp_color_time + subtitle_h + sp_time_sub_btn + (6 * sp_time_btns) + sp_time_start + start_btn_h;
+                         
+    // Ajustar escala se não couber
+    if (total_height > window_size.y * 0.95f) {
+        scale = scale * (window_size.y * 0.95f) / total_height;
+        // Recalcular alturas com nova escala
+        title_h = 52 * scale;
+        subtitle_h = 20 * scale;
+        color_btn_h = 40 * scale;
+        time_btn_h = 45 * scale;
+        start_btn_h = 60 * scale;
+        sp_title_color = 50 * scale;
+        sp_color_sub_btn = 20 * scale;
+        sp_color_time = 40 * scale;
+        sp_time_sub_btn = 20 * scale;
+        sp_time_btns = 55 * scale;
+        sp_time_start = 30 * scale;
+        
+        total_height = window_size.y * 0.95f;
     }
     
-    float title_offset = -std::min(180.0f * scale, available_height * 0.25f);
-    float subtitle_offset = title_offset + 60 * scale;
-    float button_start_y = subtitle_offset + 40 * scale;
+    float current_y = center_y - total_height / 2.0f;
     
-    float button_y = center_y + button_start_y;
-    float button_height = 45 * scale;
-    float button_spacing = 55 * scale;
+    // Pular título
+    current_y += title_h + sp_title_color;
+    
+    // Pular subtítulo cor
+    current_y += subtitle_h + sp_color_sub_btn;
+    
+    // --- SELEÇÃO DE COR ---
+    float color_btn_width = 120 * scale;
+    float color_btn_spacing = 20 * scale;
+    
+    // Verificar clique no botão Brancas
+    float white_btn_x = center_x - color_btn_width - color_btn_spacing / 2;
+    if (mouse_x >= white_btn_x && mouse_x <= white_btn_x + color_btn_width &&
+        mouse_y >= current_y && mouse_y <= current_y + color_btn_h) {
+        player_color = WHITE;
+        return;
+    }
+    
+    // Verificar clique no botão Pretas
+    float black_btn_x = center_x + color_btn_spacing / 2;
+    if (mouse_x >= black_btn_x && mouse_x <= black_btn_x + color_btn_width &&
+        mouse_y >= current_y && mouse_y <= current_y + color_btn_h) {
+        player_color = BLACK;
+        return;
+    }
+    
+    current_y += color_btn_h + sp_color_time;
+    
+    // --- SELEÇÃO DE TEMPO ---
+    // Pular subtítulo tempo
+    current_y += subtitle_h + sp_time_sub_btn;
+    
     float button_width = 250 * scale;
     
     // Verificar cliques nas opções de tempo
@@ -797,28 +993,24 @@ void ChessGUI::handle_menu_click(int mouse_x, int mouse_y) {
         float button_x = center_x - button_width / 2;
         
         if (mouse_x >= button_x && mouse_x <= button_x + button_width &&
-            mouse_y >= button_y && mouse_y <= button_y + button_height) {
-            white_time_seconds = time_options[i].second;
-            black_time_seconds = time_options[i].second;
+            mouse_y >= current_y && mouse_y <= current_y + time_btn_h) {
+            initial_time_seconds = time_options[i].second;
+            white_time_seconds = initial_time_seconds;
+            black_time_seconds = initial_time_seconds;
             return;
         }
         
-        button_y += button_spacing;
+        current_y += sp_time_btns;
     }
+    
+    current_y += sp_time_start;
     
     // Verificar clique no botão iniciar
     float start_width = 240 * scale;
-    float start_height = 60 * scale;
     float start_x = center_x - start_width / 2;
-    float start_y = button_y + 30 * scale;
-    
-    // Ajustar se necessário (mesma lógica do draw_menu)
-    if (start_y + start_height > window_size.y - 20) {
-        start_y = std::max(button_y + 10 * scale, window_size.y - start_height - 20);
-    }
     
     if (mouse_x >= start_x && mouse_x <= start_x + start_width &&
-        mouse_y >= start_y && mouse_y <= start_y + start_height) {
+        mouse_y >= current_y && mouse_y <= current_y + start_btn_h) {
         start_game();
     }
 }
@@ -827,6 +1019,11 @@ void ChessGUI::start_game() {
     current_state = PLAYING;
     game_started = true;
     game_ended = false;
+    
+    // Resetar tempos
+    white_time_seconds = initial_time_seconds;
+    black_time_seconds = initial_time_seconds;
+    
     move_start_time = std::chrono::steady_clock::now();
     captured_white.clear();
     captured_black.clear();
@@ -868,18 +1065,9 @@ void ChessGUI::update_clocks() {
 }
 
 bool ChessGUI::is_white_at_bottom() const {
-    // Verificar se há peças brancas nas ranks 0-1 (embaixo)
-    // No xadrez padrão, brancas começam embaixo
-    for (int rank = 0; rank < 2; rank++) {
-        for (int file = 0; file < 8; file++) {
-            Square sq = ChessBoard::make_square(file, rank);
-            PieceType pt = board.get_piece(sq);
-            if (pt != NONE && board.get_piece_color(sq) == WHITE) {
-                return true;
-            }
-        }
-    }
-    return false;
+    // Se o jogador escolheu brancas, brancas ficam embaixo
+    // Se escolheu pretas, pretas ficam embaixo (tabuleiro invertido)
+    return player_color == WHITE;
 }
 
 void ChessGUI::draw_clocks_and_captured() {
@@ -937,7 +1125,7 @@ void ChessGUI::draw_clocks_and_captured() {
         bool black_active = (active_side == BLACK);
         
         float clock_width = panel_width - 20;
-        float clock_height = 50;
+        float clock_height = 65; // Aumentado para evitar overflow
         float button_height = 35;
         float button_spacing = 10;
         
@@ -995,14 +1183,16 @@ void ChessGUI::draw_clocks_and_captured() {
         // Label do topo
         sf::Text top_label_text(top_label, font, static_cast<unsigned int>(14 * scale));
         top_label_text.setFillColor(sf::Color(200, 200, 200));
-        top_label_text.setPosition(board_size + 15, clock_y + 5);
+        sf::FloatRect top_label_bounds = top_label_text.getLocalBounds();
+        top_label_text.setPosition(board_size + 10 + (clock_width - top_label_bounds.width) / 2, clock_y + 5);
         window.draw(top_label_text);
         
         // Tempo do topo
         sf::Text top_clock_text(format_time(top_time), font, static_cast<unsigned int>(24 * scale));
         top_clock_text.setFillColor(top_time < 60 ? sf::Color(255, 100, 100) : sf::Color::White);
         top_clock_text.setStyle(sf::Text::Bold);
-        top_clock_text.setPosition(board_size + 15, clock_y + 20);
+        sf::FloatRect top_clock_bounds = top_clock_text.getLocalBounds();
+        top_clock_text.setPosition(board_size + 10 + (clock_width - top_clock_bounds.width) / 2, clock_y + 22);
         window.draw(top_clock_text);
         
         // Peças capturadas do topo
@@ -1067,14 +1257,16 @@ void ChessGUI::draw_clocks_and_captured() {
         // Label de baixo
         sf::Text bottom_label_text(bottom_label, font, static_cast<unsigned int>(14 * scale));
         bottom_label_text.setFillColor(sf::Color(200, 200, 200));
-        bottom_label_text.setPosition(board_size + 15, bottom_clock_y + 5);
+        sf::FloatRect bottom_label_bounds = bottom_label_text.getLocalBounds();
+        bottom_label_text.setPosition(board_size + 10 + (clock_width - bottom_label_bounds.width) / 2, bottom_clock_y + 5);
         window.draw(bottom_label_text);
         
         // Tempo de baixo
         sf::Text bottom_clock_text(format_time(bottom_time), font, static_cast<unsigned int>(24 * scale));
         bottom_clock_text.setFillColor(bottom_time < 60 ? sf::Color(255, 100, 100) : sf::Color::White);
         bottom_clock_text.setStyle(sf::Text::Bold);
-        bottom_clock_text.setPosition(board_size + 15, bottom_clock_y + 20);
+        sf::FloatRect bottom_clock_bounds = bottom_clock_text.getLocalBounds();
+        bottom_clock_text.setPosition(board_size + 10 + (clock_width - bottom_clock_bounds.width) / 2, bottom_clock_y + 22);
         window.draw(bottom_clock_text);
         
         // Peças capturadas de baixo
@@ -1240,13 +1432,12 @@ void ChessGUI::resign(Color player) {
     // Parar os relógios
     update_clocks();
     game_started = false;
+    game_ended = true;
+    winner = (player == WHITE ? BLACK : WHITE);
     
     // Mostrar mensagem de desistência (por enquanto apenas no console)
     std::cout << "Jogador " << (player == WHITE ? "Brancas" : "Pretas") << " desistiu!\n";
     std::cout << "Vencedor: " << (player == WHITE ? "Pretas" : "Brancas") << "\n";
-    
-    // Poderia adicionar uma tela de fim de jogo aqui
-    // Por enquanto, apenas para o jogo
 }
 
 void ChessGUI::run() {
@@ -1256,3 +1447,102 @@ void ChessGUI::run() {
     }
 }
 
+void ChessGUI::draw_game_over() {
+    sf::Vector2u window_size = window.getSize();
+    float center_x = window_size.x / 2.0f;
+    float center_y = window_size.y / 2.0f;
+    
+    // Fundo semitransparente
+    sf::RectangleShape overlay(sf::Vector2f(window_size.x, window_size.y));
+    overlay.setFillColor(sf::Color(0, 0, 0, 200));
+    window.draw(overlay);
+    
+    // Caixa de diálogo
+    float box_width = 400;
+    float box_height = 250;
+    sf::RectangleShape box(sf::Vector2f(box_width, box_height));
+    box.setPosition(center_x - box_width / 2, center_y - box_height / 2);
+    box.setFillColor(sf::Color(50, 50, 55));
+    box.setOutlineColor(sf::Color(100, 100, 100));
+    box.setOutlineThickness(2);
+    window.draw(box);
+    
+    // Texto de resultado
+    std::string result_text;
+    if (winner == WHITE) result_text = "Brancas Vencem!";
+    else if (winner == BLACK) result_text = "Pretas Vencem!";
+    else result_text = "Empate!"; // Caso implemente empate
+    
+    sf::Text result(result_text, font, 32);
+    result.setFillColor(sf::Color::White);
+    result.setStyle(sf::Text::Bold);
+    sf::FloatRect result_bounds = result.getLocalBounds();
+    result.setPosition(center_x - result_bounds.width / 2, center_y - 80);
+    window.draw(result);
+    
+    // Botão Reiniciar
+    float btn_width = 180;
+    float btn_height = 50;
+    float btn_spacing = 20;
+    
+    sf::RectangleShape restart_btn(sf::Vector2f(btn_width, btn_height));
+    restart_btn.setPosition(center_x - btn_width - btn_spacing / 2, center_y + 20);
+    restart_btn.setFillColor(sf::Color(70, 130, 180));
+    restart_btn.setOutlineColor(sf::Color(100, 160, 210));
+    restart_btn.setOutlineThickness(2);
+    window.draw(restart_btn);
+    
+    sf::Text restart_text("Reiniciar", font, 20);
+    restart_text.setFillColor(sf::Color::White);
+    sf::FloatRect restart_bounds = restart_text.getLocalBounds();
+    restart_text.setPosition(center_x - btn_width - btn_spacing / 2 + (btn_width - restart_bounds.width) / 2,
+                            center_y + 20 + (btn_height - restart_bounds.height) / 2 - 5);
+    window.draw(restart_text);
+    
+    // Botão Menu
+    sf::RectangleShape menu_btn(sf::Vector2f(btn_width, btn_height));
+    menu_btn.setPosition(center_x + btn_spacing / 2, center_y + 20);
+    menu_btn.setFillColor(sf::Color(80, 80, 80));
+    menu_btn.setOutlineColor(sf::Color(120, 120, 120));
+    menu_btn.setOutlineThickness(2);
+    window.draw(menu_btn);
+    
+    sf::Text menu_text("Menu Principal", font, 20);
+    menu_text.setFillColor(sf::Color::White);
+    sf::FloatRect menu_bounds = menu_text.getLocalBounds();
+    menu_text.setPosition(center_x + btn_spacing / 2 + (btn_width - menu_bounds.width) / 2,
+                         center_y + 20 + (btn_height - menu_bounds.height) / 2 - 5);
+    window.draw(menu_text);
+}
+
+void ChessGUI::handle_game_over_click(int mouse_x, int mouse_y) {
+    sf::Vector2u window_size = window.getSize();
+    float center_x = window_size.x / 2.0f;
+    float center_y = window_size.y / 2.0f;
+    
+    float btn_width = 180;
+    float btn_height = 50;
+    float btn_spacing = 20;
+    
+    // Botão Reiniciar
+    float restart_x = center_x - btn_width - btn_spacing / 2;
+    float restart_y = center_y + 20;
+    
+    if (mouse_x >= restart_x && mouse_x <= restart_x + btn_width &&
+        mouse_y >= restart_y && mouse_y <= restart_y + btn_height) {
+        start_game(); // Reinicia com as mesmas configurações
+        return;
+    }
+    
+    // Botão Menu
+    float menu_x = center_x + btn_spacing / 2;
+    float menu_y = center_y + 20;
+    
+    if (mouse_x >= menu_x && mouse_x <= menu_x + btn_width &&
+        mouse_y >= menu_y && mouse_y <= menu_y + btn_height) {
+        current_state = MENU;
+        game_started = false;
+        game_ended = false;
+        return;
+    }
+}
