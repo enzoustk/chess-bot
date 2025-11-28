@@ -42,10 +42,12 @@ private:
     // Tempo dos jogadores (em segundos)
     int white_time_seconds;
     int black_time_seconds;
+    int initial_time_seconds; // Tempo inicial selecionado
     std::chrono::steady_clock::time_point move_start_time;
     bool game_started;
     bool game_ended;  // Se o jogo terminou (tempo esgotado, xeque-mate, etc)
     Color winner;  // Vencedor do jogo
+    Color player_color; // Cor do jogador (BRANCAS ou PRETAS)
     
     // Peças capturadas
     std::vector<PieceType> captured_white;  // Peças brancas capturadas (por pretas)
@@ -81,7 +83,9 @@ private:
     
     // Menu e configuração
     void draw_menu();
+    void draw_game_over();
     void handle_menu_click(int mouse_x, int mouse_y);
+    void handle_game_over_click(int mouse_x, int mouse_y);
     void start_game();
     
     // Relógio e peças capturadas
