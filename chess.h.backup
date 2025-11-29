@@ -161,6 +161,9 @@ public:
     int get_halfmove_clock() const { return halfmove_clock; }
     // ------------------------------------------------------
     
+    // [NOVO] Gera a notação SAN para um movimento
+    std::string move_to_san(const Move& move);
+    
     void print_board() const;
     std::string to_fen() const;
     void from_fen(const std::string& fen);

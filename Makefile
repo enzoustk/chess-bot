@@ -64,8 +64,9 @@ release: clean $(TARGET)
 # Compilação com interface gráfica (requer SFML)
 gui: CXXFLAGS += -DUSE_SFML
 gui: LDFLAGS += -lsfml-graphics -lsfml-window -lsfml-system
-gui: chess_gui.o chess.o main.o
-	$(CXX) $(CXXFLAGS) -o $(TARGET) chess.o main.o chess_gui.o $(LDFLAGS)
+# CHANGE 1: Add chess_engine.o to the dependencies line below
+gui: chess_gui.o chess.o main.o chess_engine.o
+# CHANGE 2: Add chess_engine.o to the compile command line below
+	$(CXX) $(CXXFLAGS) -o $(TARGET) chess.o main.o chess_gui.o chess_engine.o $(LDFLAGS)
 	@echo "Compilado com suporte a interface gráfica!"
 	@echo "Execute com: ./$(TARGET) --gui"
-

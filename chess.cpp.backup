@@ -1,0 +1,498 @@
+#include "chess.h"
+#include <iostream>
+#include <sstream>
+#include <algorithm>
+#include <cstring>
+#include <cctype>
+#include <random> // [NOVO] Para gerar números aleatórios do Zobrist
+
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
+
+// Lookup tables
+std::array<Bitboard, 64> ChessBoard::knight_moves;
+std::array<Bitboard, 64> ChessBoard::king_moves;
+std::array<std::array<Bitboard, 64>, 4> ChessBoard::pawn_attacks;
+std::array<Bitboard, 64> ChessBoard::pawn_pushes_white;
+std::array<Bitboard, 64> ChessBoard::pawn_pushes_black;
+
+// [NOVO] Zobrist Tables Definitions
+uint64_t ChessBoard::zobrist_pieces[2][6][64];
+uint64_t ChessBoard::zobrist_side;
+uint64_t ChessBoard::zobrist_castling[4];
+uint64_t ChessBoard::zobrist_enpassant[8];
+
+// Bit helpers
+inline Bitboard set_bit(Square sq) { return 1ULL << sq; }
+inline bool get_bit(Bitboard bb, Square sq) { return (bb >> sq) & 1; }
+
+#ifdef _MSC_VER
+    inline int pop_count(Bitboard bb) { return (int)__popcnt64(bb); }
+    inline Square lsb(Bitboard bb) {
+        unsigned long index; return _BitScanForward64(&index, bb) ? (Square)index : NO_SQUARE;
+    }
+#else
+    inline int pop_count(Bitboard bb) { return __builtin_popcountll(bb); }
+    inline Square lsb(Bitboard bb) { return bb ? __builtin_ctzll(bb) : NO_SQUARE; }
+#endif
+
+// --- IMPLEMENTAÇÃO ZOBRIST ---
+
+// Inicializa números aleatórios uma única vez
+void ChessBoard::init_zobrist() {
+    std::mt19937_64 rng(123456789); // Semente fixa para reprodutibilidade
+    
+    for (int c = 0; c < 2; c++)
+        for (int p = 0; p < 6; p++)
+            for (int sq = 0; sq < 64; sq++)
+                zobrist_pieces[c][p][sq] = rng();
+
+    zobrist_side = rng();
+
+    for (int i = 0; i < 4; i++) zobrist_castling[i] = rng();
+    for (int i = 0; i < 8; i++) zobrist_enpassant[i] = rng();
+}
+
+// Calcula hash do zero (lento, usado apenas no setup)
+uint64_t ChessBoard::compute_hash() const {
+    uint64_t hash = 0;
+    
+    for (int sq = 0; sq < 64; sq++) {
+        PieceType pt = get_piece(sq);
+        if (pt != NONE) {
+            hash ^= zobrist_pieces[get_piece_color(sq)][pt][sq];
+        }
+    }
+
+    if (side_to_move == BLACK) hash ^= zobrist_side;
+
+    if (castling_rights[WHITE][0]) hash ^= zobrist_castling[0];
+    if (castling_rights[WHITE][1]) hash ^= zobrist_castling[1];
+    if (castling_rights[BLACK][0]) hash ^= zobrist_castling[2];
+    if (castling_rights[BLACK][1]) hash ^= zobrist_castling[3];
+
+    if (en_passant_square != NO_SQUARE) {
+        hash ^= zobrist_enpassant[get_file(en_passant_square)];
+    }
+
+    return hash;
+}
+
+// --- IMPLEMENTAÇÃO DA EXECUÇÃO DE MOVIMENTOS ---
+
+void ChessBoard::make_move_internal(const Move& move) {
+    if (move.from == NO_SQUARE || move.to == NO_SQUARE) return;
+
+    GameState state;
+    state.move = move;
+    state.en_passant_square = en_passant_square;
+    std::memcpy(state.castling_rights, castling_rights, sizeof(castling_rights));
+    state.halfmove_clock = halfmove_clock;
+    state.captured_piece = NONE;
+    state.captured_square = NO_SQUARE;
+    
+    Color us = side_to_move;
+    Color them = (us == WHITE) ? BLACK : WHITE;
+    auto& my_pieces = (us == WHITE) ? pieces_white : pieces_black;
+    auto& enemy_pieces = (us == WHITE) ? pieces_black : pieces_white;
+    
+    PieceType pt = get_piece(move.from);
+    state.moved_piece = pt; 
+
+    if (pt == NONE) {
+        history.push_back(state);
+        side_to_move = them;
+        return; // Segurança
+    }
+
+    // [HASH] Remove a peça da origem do hash
+    current_hash ^= zobrist_pieces[us][pt][move.from];
+
+    // Captura Normal
+    if (get_bit(enemy_pieces[PAWN] | enemy_pieces[KNIGHT] | enemy_pieces[BISHOP] | 
+                enemy_pieces[ROOK] | enemy_pieces[QUEEN] | enemy_pieces[KING], move.to)) {
+        PieceType cap = get_piece(move.to);
+        if (cap != NONE) {
+            state.captured_piece = cap;
+            state.captured_square = move.to;
+            enemy_pieces[cap] &= ~set_bit(move.to);
+            // [HASH] Remove a peça capturada do hash
+            current_hash ^= zobrist_pieces[them][cap][move.to];
+        }
+    }
+    
+    // En Passant
+    if (move.is_en_passant) {
+        Square cap_sq = make_square(get_file(en_passant_square), get_rank(move.from));
+        state.captured_piece = PAWN;
+        state.captured_square = cap_sq;
+        enemy_pieces[PAWN] &= ~set_bit(cap_sq);
+        // [HASH] Remove o peão capturado por en-passant
+        current_hash ^= zobrist_pieces[them][PAWN][cap_sq];
+    }
+    
+    // Mover a peça
+    my_pieces[pt] &= ~set_bit(move.from);
+    PieceType dest_pt = (move.promotion == NONE) ? pt : move.promotion;
+    my_pieces[dest_pt] |= set_bit(move.to);
+    
+    // [HASH] Adiciona a peça no destino
+    current_hash ^= zobrist_pieces[us][dest_pt][move.to];
+    
+    // Roque (mover torre)
+    if (move.is_castle) {
+        Square r_from, r_to;
+        if (move.to > move.from) { r_from = (us==WHITE)?H1:H8; r_to = (us==WHITE)?F1:F8; }
+        else { r_from = (us==WHITE)?A1:A8; r_to = (us==WHITE)?D1:D8; }
+        my_pieces[ROOK] &= ~set_bit(r_from);
+        my_pieces[ROOK] |= set_bit(r_to);
+        
+        // [HASH] Atualiza a torre do roque
+        current_hash ^= zobrist_pieces[us][ROOK][r_from];
+        current_hash ^= zobrist_pieces[us][ROOK][r_to];
+    }
+    
+    // [HASH] Remove direitos de roque antigos do hash
+    if (castling_rights[WHITE][0]) current_hash ^= zobrist_castling[0];
+    if (castling_rights[WHITE][1]) current_hash ^= zobrist_castling[1];
+    if (castling_rights[BLACK][0]) current_hash ^= zobrist_castling[2];
+    if (castling_rights[BLACK][1]) current_hash ^= zobrist_castling[3];
+    
+    // [HASH] Remove en-passant antigo
+    if (en_passant_square != NO_SQUARE) current_hash ^= zobrist_enpassant[get_file(en_passant_square)];
+
+    // Atualizar En Passant
+    en_passant_square = NO_SQUARE;
+    if (pt == PAWN && std::abs(get_rank(move.to) - get_rank(move.from)) == 2) {
+        en_passant_square = make_square(get_file(move.from), (get_rank(move.from) + get_rank(move.to)) / 2);
+    }
+    
+    // Direitos de Roque
+    if (pt == KING) { castling_rights[us][0] = false; castling_rights[us][1] = false; }
+    if (pt == ROOK) {
+        if (move.from == (us == WHITE ? H1 : H8)) castling_rights[us][0] = false;
+        if (move.from == (us == WHITE ? A1 : A8)) castling_rights[us][1] = false;
+    }
+    if (state.captured_piece == ROOK) {
+        if (state.captured_square == (them == WHITE ? H1 : H8)) castling_rights[them][0] = false;
+        if (state.captured_square == (them == WHITE ? A1 : A8)) castling_rights[them][1] = false;
+    }
+    
+    // [HASH] Adiciona novos direitos de roque
+    if (castling_rights[WHITE][0]) current_hash ^= zobrist_castling[0];
+    if (castling_rights[WHITE][1]) current_hash ^= zobrist_castling[1];
+    if (castling_rights[BLACK][0]) current_hash ^= zobrist_castling[2];
+    if (castling_rights[BLACK][1]) current_hash ^= zobrist_castling[3];
+
+    // [HASH] Adiciona novo en-passant
+    if (en_passant_square != NO_SQUARE) current_hash ^= zobrist_enpassant[get_file(en_passant_square)];
+    
+    // [HASH] Alterna o lado a jogar
+    current_hash ^= zobrist_side;
+
+    halfmove_clock++;
+    if (pt == PAWN || state.captured_piece != NONE) halfmove_clock = 0;
+    if (us == BLACK) fullmove_number++;
+    
+    side_to_move = them;
+    update_bitboards();
+    history.push_back(state);
+}
+
+void ChessBoard::unmake_move() {
+    if (history.empty()) return;
+    GameState state = history.back();
+    history.pop_back();
+    
+    if (state.moved_piece == NONE) {
+        side_to_move = (side_to_move == WHITE) ? BLACK : WHITE;
+        return;
+    }
+
+    // [HASH] Restauramos o hash re-executando o XOR (propriedade A^B^B = A)
+    // Na prática, é mais seguro e simples restaurar recalculando ou salvando no GameState.
+    // Mas para manter performance e consistência com incremental:
+    // O jeito mais seguro no Undo é restaurar as variáveis de estado e recalcular, 
+    // mas para velocidade vamos confiar na reversibilidade OU adicionar o hash ao GameState.
+    // Vamos adicionar o hash ao GameState no futuro? 
+    // Por enquanto, vou usar a REVERSÃO MANUAL:
+    
+    // NOTA: Para simplificar e evitar bugs no unmake, é muito comum em engines
+    // simplesmente salvar o hash anterior no histórico.
+    // Como não adicionei 'hash' no struct GameState no chess.h (para evitar editar .h de novo e recompilar tudo),
+    // vamos recalcular ou reverter manualmente. 
+    // ESPERE: Se eu não salvar o hash anterior, o incremental no unmake é um pesadelo.
+    // VOU USAR UMA ESTRATÉGIA HÍBRIDA: Recalcular no unmake não é tão crítico quanto no make.
+    // Mas vamos tentar reverter.
+    
+    // Reverter En Passant e Castling do hash ATUAL (que é o hash da posição DEPOIS do lance)
+    if (en_passant_square != NO_SQUARE) current_hash ^= zobrist_enpassant[get_file(en_passant_square)];
+    if (castling_rights[WHITE][0]) current_hash ^= zobrist_castling[0];
+    if (castling_rights[WHITE][1]) current_hash ^= zobrist_castling[1];
+    if (castling_rights[BLACK][0]) current_hash ^= zobrist_castling[2];
+    if (castling_rights[BLACK][1]) current_hash ^= zobrist_castling[3];
+    current_hash ^= zobrist_side; // Reverte lado
+
+    // Restaurar variáveis de estado
+    side_to_move = (side_to_move == WHITE) ? BLACK : WHITE;
+    en_passant_square = state.en_passant_square;
+    std::memcpy(castling_rights, state.castling_rights, sizeof(castling_rights));
+    
+    // Recolocar Castling e EP antigos no Hash
+    if (en_passant_square != NO_SQUARE) current_hash ^= zobrist_enpassant[get_file(en_passant_square)];
+    if (castling_rights[WHITE][0]) current_hash ^= zobrist_castling[0];
+    if (castling_rights[WHITE][1]) current_hash ^= zobrist_castling[1];
+    if (castling_rights[BLACK][0]) current_hash ^= zobrist_castling[2];
+    if (castling_rights[BLACK][1]) current_hash ^= zobrist_castling[3];
+
+    Color prev_side = side_to_move;
+    auto& my_pieces = (prev_side == WHITE) ? pieces_white : pieces_black;
+    auto& enemy_pieces = (prev_side == WHITE) ? pieces_black : pieces_white;
+    
+    Move m = state.move;
+    PieceType pt_orig = state.moved_piece;
+    PieceType pt_now = (m.promotion != NONE) ? m.promotion : pt_orig;
+
+    // Desfazer mover (Hash e Bitboard)
+    my_pieces[pt_now] &= ~set_bit(m.to);
+    current_hash ^= zobrist_pieces[prev_side][pt_now][m.to]; // Tira do destino
+
+    my_pieces[pt_orig] |= set_bit(m.from);
+    current_hash ^= zobrist_pieces[prev_side][pt_orig][m.from]; // Põe na origem
+    
+    // Desfazer captura
+    if (state.captured_piece != NONE) {
+        enemy_pieces[state.captured_piece] |= set_bit(state.captured_square);
+        current_hash ^= zobrist_pieces[prev_side == WHITE ? BLACK : WHITE][state.captured_piece][state.captured_square];
+    }
+    
+    // Desfazer En Passant (se captura foi EP, já tratada acima como PAWN no lugar certo, mas precisamos ajustar se foi EP)
+    // Na captura EP, o peão capturado está em 'captured_square'.
+    if (m.is_en_passant) {
+       // A lógica acima já cobre: state.captured_square tem a posição do peão comido.
+       // O hash já foi restaurado corretamente ali em cima.
+    }
+    
+    // Desfazer Roque
+    if (m.is_castle) {
+        Square r_from, r_to;
+        if (m.to > m.from) { r_from = (prev_side == WHITE) ? H1 : H8; r_to = (prev_side == WHITE) ? F1 : F8; }
+        else { r_from = (prev_side == WHITE) ? A1 : A8; r_to = (prev_side == WHITE) ? D1 : D8; }
+        
+        my_pieces[ROOK] &= ~set_bit(r_to);
+        my_pieces[ROOK] |= set_bit(r_from);
+        
+        current_hash ^= zobrist_pieces[prev_side][ROOK][r_to];
+        current_hash ^= zobrist_pieces[prev_side][ROOK][r_from];
+    }
+    
+    halfmove_clock = state.halfmove_clock;
+    if (side_to_move == BLACK) fullmove_number--;
+    
+    update_bitboards();
+}
+
+// ... (Resto das funções mantidas iguais, só copiando para garantir integridade)
+bool ChessBoard::is_legal_move(const Move& move) const {
+    if (move.from == NO_SQUARE || move.to == NO_SQUARE) return false;
+    if (get_piece(move.from) == NONE || get_piece_color(move.from) != side_to_move) return false;
+    ChessBoard& board = const_cast<ChessBoard&>(*this);
+    board.make_move_internal(move);
+    bool in_check = board.is_check(board.side_to_move == WHITE ? BLACK : WHITE);
+    board.unmake_move();
+    return !in_check;
+}
+
+// Helpers
+void ChessBoard::update_bitboards() {
+    all_white = 0; all_black = 0;
+    for (int i = 0; i < 6; i++) { all_white |= pieces_white[i]; all_black |= pieces_black[i]; }
+    all_pieces = all_white | all_black;
+}
+PieceType ChessBoard::get_piece(Square sq) const {
+    if (sq < 0 || sq >= 64) return NONE;
+    
+    Bitboard sq_bb = set_bit(sq);
+    if ((all_pieces & sq_bb) == 0) return NONE;
+    
+    if (pieces_white[PAWN] & sq_bb) return PAWN;
+    if (pieces_black[PAWN] & sq_bb) return PAWN;
+    
+    if (pieces_white[KNIGHT] & sq_bb) return KNIGHT;
+    if (pieces_black[KNIGHT] & sq_bb) return KNIGHT;
+    
+    if (pieces_white[BISHOP] & sq_bb) return BISHOP;
+    if (pieces_black[BISHOP] & sq_bb) return BISHOP;
+    
+    if (pieces_white[ROOK] & sq_bb) return ROOK;
+    if (pieces_black[ROOK] & sq_bb) return ROOK;
+    
+    if (pieces_white[QUEEN] & sq_bb) return QUEEN;
+    if (pieces_black[QUEEN] & sq_bb) return QUEEN;
+    
+    if (pieces_white[KING] & sq_bb) return KING;
+    if (pieces_black[KING] & sq_bb) return KING;
+    
+    return NONE;
+}
+Color ChessBoard::get_piece_color(Square sq) const { Bitboard sq_bb = set_bit(sq); if (all_white & sq_bb) return WHITE; if (all_black & sq_bb) return BLACK; return WHITE; }
+
+// Ataques e geração (Compactados para caber)
+Bitboard ChessBoard::get_bishop_attacks(Square sq, Bitboard occupied) const {
+    Bitboard attacks = 0; int r = get_rank(sq), f = get_file(sq);
+    for (int nr = r + 1, nf = f - 1; nr < 8 && nf >= 0; nr++, nf--) { Square s = make_square(nf, nr); attacks |= set_bit(s); if (get_bit(occupied, s)) break; }
+    for (int nr = r + 1, nf = f + 1; nr < 8 && nf < 8; nr++, nf++) { Square s = make_square(nf, nr); attacks |= set_bit(s); if (get_bit(occupied, s)) break; }
+    for (int nr = r - 1, nf = f - 1; nr >= 0 && nf >= 0; nr--, nf--) { Square s = make_square(nf, nr); attacks |= set_bit(s); if (get_bit(occupied, s)) break; }
+    for (int nr = r - 1, nf = f + 1; nr >= 0 && nf < 8; nr--, nf++) { Square s = make_square(nf, nr); attacks |= set_bit(s); if (get_bit(occupied, s)) break; }
+    return attacks;
+}
+Bitboard ChessBoard::get_rook_attacks(Square sq, Bitboard occupied) const {
+    Bitboard attacks = 0; int r = get_rank(sq), f = get_file(sq);
+    for (int nr = r + 1; nr < 8; nr++) { Square s = make_square(f, nr); attacks |= set_bit(s); if (get_bit(occupied, s)) break; }
+    for (int nr = r - 1; nr >= 0; nr--) { Square s = make_square(f, nr); attacks |= set_bit(s); if (get_bit(occupied, s)) break; }
+    for (int nf = f + 1; nf < 8; nf++) { Square s = make_square(nf, r); attacks |= set_bit(s); if (get_bit(occupied, s)) break; }
+    for (int nf = f - 1; nf >= 0; nf--) { Square s = make_square(nf, r); attacks |= set_bit(s); if (get_bit(occupied, s)) break; }
+    return attacks;
+}
+Bitboard ChessBoard::get_queen_attacks(Square sq, Bitboard occupied) const { return get_bishop_attacks(sq, occupied) | get_rook_attacks(sq, occupied); }
+Bitboard ChessBoard::get_knight_attacks(Square sq) const { return knight_moves[sq]; }
+Bitboard ChessBoard::get_king_attacks(Square sq) const { return king_moves[sq]; }
+Bitboard ChessBoard::get_pawn_attacks(Square sq, Color c) const { return pawn_attacks[c][sq]; }
+Bitboard ChessBoard::get_attacks_by(Square sq, PieceType pt, Color c) const {
+    switch (pt) { case PAWN: return get_pawn_attacks(sq, c); case KNIGHT: return get_knight_attacks(sq); case BISHOP: return get_bishop_attacks(sq, all_pieces); case ROOK: return get_rook_attacks(sq, all_pieces); case QUEEN: return get_queen_attacks(sq, all_pieces); case KING: return get_king_attacks(sq); default: return 0; }
+}
+Bitboard ChessBoard::get_attacks_to(Square sq, Color attacker_color) const {
+    Bitboard attacks = 0; const auto& pieces = (attacker_color == WHITE) ? pieces_white : pieces_black;
+    attacks |= (get_pawn_attacks(sq, attacker_color == WHITE ? BLACK : WHITE) & pieces[PAWN]);
+    attacks |= (get_knight_attacks(sq) & pieces[KNIGHT]);
+    attacks |= (get_king_attacks(sq) & pieces[KING]);
+    Bitboard bishops = pieces[BISHOP] | pieces[QUEEN]; if (bishops) attacks |= (get_bishop_attacks(sq, all_pieces) & bishops);
+    Bitboard rooks = pieces[ROOK] | pieces[QUEEN]; if (rooks) attacks |= (get_rook_attacks(sq, all_pieces) & rooks);
+    return attacks;
+}
+bool ChessBoard::is_square_attacked(Square sq, Color by_color) const { return get_attacks_to(sq, by_color) != 0; }
+bool ChessBoard::is_check(Color c) const { const auto& pieces = (c == WHITE) ? pieces_white : pieces_black; if (pieces[KING] == 0) return false; return is_square_attacked(lsb(pieces[KING]), c == WHITE ? BLACK : WHITE); }
+
+// Generators
+void ChessBoard::generate_pawn_moves(std::vector<Move>& moves, Color c) const {
+    const auto& pieces = (c == WHITE) ? pieces_white : pieces_black; Bitboard pawns = pieces[PAWN]; Bitboard enemies = (c == WHITE) ? all_black : all_white;
+    int promo_rank = (c == WHITE) ? 7 : 0; int start_rank = (c == WHITE) ? 1 : 6; int forward = (c == WHITE) ? 8 : -8;
+    while (pawns) {
+        Square from = lsb(pawns); pawns &= pawns - 1; Square to = from + forward;
+        if (to >= 0 && to < 64 && !get_bit(all_pieces, to)) {
+            if (get_rank(to) == promo_rank) for (int p : {KNIGHT, BISHOP, ROOK, QUEEN}) moves.push_back(Move(from, to, (PieceType)p));
+            else { moves.push_back(Move(from, to)); if (get_rank(from) == start_rank) { Square to2 = to + forward; if (!get_bit(all_pieces, to2)) moves.push_back(Move(from, to2)); } }
+        }
+        Bitboard att = get_pawn_attacks(from, c) & enemies;
+        while (att) { Square to_cap = lsb(att); att &= att - 1; if (get_rank(to_cap) == promo_rank) for (int p : {KNIGHT, BISHOP, ROOK, QUEEN}) moves.push_back(Move(from, to_cap, (PieceType)p)); else moves.push_back(Move(from, to_cap)); }
+        if (en_passant_square != NO_SQUARE) if (get_pawn_attacks(from, c) & set_bit(en_passant_square)) { Move m(from, en_passant_square); m.is_en_passant = true; moves.push_back(m); }
+    }
+}
+void ChessBoard::generate_knight_moves(std::vector<Move>& moves, Color c) const { const auto& pieces = (c == WHITE) ? pieces_white : pieces_black; Bitboard knights = pieces[KNIGHT]; Bitboard friends = (c == WHITE) ? all_white : all_black; while(knights) { Square from = lsb(knights); knights &= knights - 1; Bitboard att = get_knight_attacks(from) & ~friends; while(att) { moves.push_back(Move(from, lsb(att))); att &= att - 1; } } }
+void ChessBoard::generate_bishop_moves(std::vector<Move>& moves, Color c) const { const auto& pieces = (c == WHITE) ? pieces_white : pieces_black; Bitboard b = pieces[BISHOP]; Bitboard friends = (c == WHITE) ? all_white : all_black; while(b) { Square from = lsb(b); b &= b - 1; Bitboard att = get_bishop_attacks(from, all_pieces) & ~friends; while(att) { moves.push_back(Move(from, lsb(att))); att &= att - 1; } } }
+void ChessBoard::generate_rook_moves(std::vector<Move>& moves, Color c) const { const auto& pieces = (c == WHITE) ? pieces_white : pieces_black; Bitboard r = pieces[ROOK]; Bitboard friends = (c == WHITE) ? all_white : all_black; while(r) { Square from = lsb(r); r &= r - 1; Bitboard att = get_rook_attacks(from, all_pieces) & ~friends; while(att) { moves.push_back(Move(from, lsb(att))); att &= att - 1; } } }
+void ChessBoard::generate_queen_moves(std::vector<Move>& moves, Color c) const { const auto& pieces = (c == WHITE) ? pieces_white : pieces_black; Bitboard q = pieces[QUEEN]; Bitboard friends = (c == WHITE) ? all_white : all_black; while(q) { Square from = lsb(q); q &= q - 1; Bitboard att = get_queen_attacks(from, all_pieces) & ~friends; while(att) { moves.push_back(Move(from, lsb(att))); att &= att - 1; } } }
+void ChessBoard::generate_king_moves(std::vector<Move>& moves, Color c) const { const auto& pieces = (c == WHITE) ? pieces_white : pieces_black; if (pieces[KING] == 0) return; Square from = lsb(pieces[KING]); Bitboard friends = (c == WHITE) ? all_white : all_black; Bitboard att = get_king_attacks(from) & ~friends; while(att) { moves.push_back(Move(from, lsb(att))); att &= att - 1; } }
+void ChessBoard::generate_castling_moves(std::vector<Move>& moves, Color c) const { if (is_check(c)) return; Square king_sq = (c == WHITE) ? E1 : E8; int rank = (c == WHITE) ? 0 : 7;
+    if (castling_rights[c][0]) if (!get_bit(all_pieces, make_square(5, rank)) && !get_bit(all_pieces, make_square(6, rank))) if (!is_square_attacked(make_square(5, rank), c == WHITE ? BLACK : WHITE) && !is_square_attacked(make_square(6, rank), c == WHITE ? BLACK : WHITE)) { Move m(king_sq, make_square(6, rank)); m.is_castle = true; moves.push_back(m); }
+    if (castling_rights[c][1]) if (!get_bit(all_pieces, make_square(1, rank)) && !get_bit(all_pieces, make_square(2, rank)) && !get_bit(all_pieces, make_square(3, rank))) if (!is_square_attacked(make_square(2, rank), c == WHITE ? BLACK : WHITE) && !is_square_attacked(make_square(3, rank), c == WHITE ? BLACK : WHITE)) { Move m(king_sq, make_square(2, rank)); m.is_castle = true; moves.push_back(m); } }
+std::vector<Move> ChessBoard::generate_legal_moves() const { std::vector<Move> moves; moves.reserve(64); generate_pawn_moves(moves, side_to_move); generate_knight_moves(moves, side_to_move); generate_bishop_moves(moves, side_to_move); generate_rook_moves(moves, side_to_move); generate_queen_moves(moves, side_to_move); generate_king_moves(moves, side_to_move); generate_castling_moves(moves, side_to_move);
+    std::vector<Move> legal_moves; legal_moves.reserve(moves.size()); for (const auto& move : moves) if (is_legal_move(move)) legal_moves.push_back(move); return legal_moves; }
+bool ChessBoard::make_move(const Move& move) { if (is_legal_move(move)) { make_move_internal(move); return true; } return false; }
+bool ChessBoard::is_checkmate(Color c) const { if (!is_check(c)) return false; return generate_legal_moves().empty(); }
+bool ChessBoard::is_stalemate(Color c) const { if (is_check(c)) return false; return generate_legal_moves().empty(); }
+bool ChessBoard::is_game_over() const { return is_checkmate(side_to_move) || is_stalemate(side_to_move); }
+Square ChessBoard::square_from_string(const std::string& str) { if (str.length() != 2) return NO_SQUARE; return make_square(str[0]-'a', str[1]-'1'); }
+std::string ChessBoard::square_to_string(Square sq) { if (sq == NO_SQUARE) return "-"; std::string s; s += (char)('a' + get_file(sq)); s += (char)('1' + get_rank(sq)); return s; }
+std::string Move::to_string() const { if (from == NO_SQUARE) return "0000"; std::string s = ChessBoard::square_to_string(from) + ChessBoard::square_to_string(to); if (promotion != NONE) s += "nbrq"[promotion-1]; return s; }
+Move Move::from_string(const std::string& s) { return Move(ChessBoard::square_from_string(s.substr(0,2)), ChessBoard::square_from_string(s.substr(2,2))); }
+void ChessBoard::print_board() const { std::cout << "\n  a b c d e f g h\n"; for (int r=7; r>=0; r--) { std::cout << r+1 << " "; for (int f=0; f<8; f++) { PieceType pt = get_piece(make_square(f, r)); char c = '.'; if (pt != NONE) { c = "pnbrqk"[pt]; if (get_piece_color(make_square(f, r)) == WHITE) c = toupper(c); } std::cout << c << " "; } std::cout << r+1 << "\n"; } std::cout << "  a b c d e f g h\n"; }
+
+void ChessBoard::initialize_lookup_tables() {
+    // Inicialização segura com Zobrist
+    init_zobrist();
+    for (Square sq = 0; sq < 64; sq++) { Bitboard moves = 0; int r = get_rank(sq), f = get_file(sq); int offsets[8][2] = {{-2, -1}, {-2, 1}, {-1, -2}, {-1, 2}, {1, -2}, {1, 2}, {2, -1}, {2, 1}}; for (auto& off : offsets) { int nr = r + off[0], nf = f + off[1]; if (nr >= 0 && nr < 8 && nf >= 0 && nf < 8) moves |= set_bit(make_square(nf, nr)); } knight_moves[sq] = moves; }
+    for (Square sq = 0; sq < 64; sq++) { Bitboard moves = 0; int r = get_rank(sq), f = get_file(sq); for (int dr = -1; dr <= 1; dr++) { for (int df = -1; df <= 1; df++) { if (dr == 0 && df == 0) continue; int nr = r + dr, nf = f + df; if (nr >= 0 && nr < 8 && nf >= 0 && nf < 8) moves |= set_bit(make_square(nf, nr)); } } king_moves[sq] = moves; }
+    for (Square sq = 0; sq < 64; sq++) { int r = get_rank(sq), f = get_file(sq); if (r < 7) { if (f > 0) pawn_attacks[WHITE][sq] |= set_bit(make_square(f - 1, r + 1)); if (f < 7) pawn_attacks[WHITE][sq] |= set_bit(make_square(f + 1, r + 1)); } if (r > 0) { if (f > 0) pawn_attacks[BLACK][sq] |= set_bit(make_square(f - 1, r - 1)); if (f < 7) pawn_attacks[BLACK][sq] |= set_bit(make_square(f + 1, r - 1)); } }
+}
+ChessBoard::ChessBoard() { initialize_lookup_tables(); from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"); }
+ChessBoard::ChessBoard(const std::string& fen) { initialize_lookup_tables(); from_fen(fen); }
+void ChessBoard::from_fen(const std::string& fen) { 
+    for (int i=0; i<6; i++) { pieces_white[i]=0; pieces_black[i]=0; } 
+    std::istringstream ss(fen); std::string placement, turn, castling, ep, half, full; ss >> placement >> turn >> castling >> ep; 
+    if (ss >> half) halfmove_clock = std::stoi(half); else halfmove_clock = 0; if (ss >> full) fullmove_number = std::stoi(full); else fullmove_number = 1; 
+    int r = 7, f = 0; for (char c : placement) { if (c == '/') { r--; f = 0; continue; } if (isdigit(c)) { f += c - '0'; continue; } Color col = isupper(c) ? WHITE : BLACK; PieceType pt = NONE; switch(tolower(c)) { case 'p': pt=PAWN; break; case 'n': pt=KNIGHT; break; case 'b': pt=BISHOP; break; case 'r': pt=ROOK; break; case 'q': pt=QUEEN; break; case 'k': pt=KING; break; } if (col == WHITE) pieces_white[pt] |= set_bit(make_square(f, r)); else pieces_black[pt] |= set_bit(make_square(f, r)); f++; } 
+    update_bitboards(); side_to_move = (turn == "w") ? WHITE : BLACK; std::memset(castling_rights, 0, sizeof(castling_rights)); if (castling.find('K') != std::string::npos) castling_rights[WHITE][0] = true; if (castling.find('Q') != std::string::npos) castling_rights[WHITE][1] = true; if (castling.find('k') != std::string::npos) castling_rights[BLACK][0] = true; if (castling.find('q') != std::string::npos) castling_rights[BLACK][1] = true; en_passant_square = (ep == "-") ? NO_SQUARE : square_from_string(ep); 
+    // [IMPORTANTE] Calcular hash inicial após o setup completo
+    current_hash = compute_hash();
+}
+std::string ChessBoard::to_fen() const { std::ostringstream fen; for (int r = 7; r >= 0; r--) { int e = 0; for (int f = 0; f < 8; f++) { PieceType pt = get_piece(make_square(f, r)); if (pt == NONE) e++; else { if (e) { fen << e; e = 0; } char p = "pnbrqk"[pt]; if (get_piece_color(make_square(f, r)) == WHITE) p = toupper(p); fen << p; } } if (e) fen << e; if (r > 0) fen << "/"; } fen << " " << (side_to_move == WHITE ? "w" : "b") << " "; bool any = false; if (castling_rights[WHITE][0]) { fen << "K"; any = true; } if (castling_rights[WHITE][1]) { fen << "Q"; any = true; } if (castling_rights[BLACK][0]) { fen << "k"; any = true; } if (castling_rights[BLACK][1]) { fen << "q"; any = true; } if (!any) fen << "-"; fen << " " << (en_passant_square == NO_SQUARE ? "-" : square_to_string(en_passant_square)); fen << " " << halfmove_clock << " " << fullmove_number; return fen.str(); }
+
+std::string ChessBoard::move_to_san(const Move& move) {
+    if (move.is_castle) {
+        return (move.to > move.from) ? "O-O" : "O-O-O";
+    }
+
+    PieceType pt = get_piece(move.from);
+    std::string san = "";
+
+    if (pt != PAWN) {
+        san += toupper("pnbrqk"[pt]);
+    }
+
+    // Disambiguation
+    // Find other pieces of same type and color that can move to the same square
+    bool file_ambig = false;
+    bool rank_ambig = false;
+    bool needs_disambiguation = false;
+    
+    if (pt != PAWN) {
+        std::vector<Move> legal = generate_legal_moves();
+        for (const auto& m : legal) {
+            if (m.from != move.from && m.to == move.to && get_piece(m.from) == pt) {
+                needs_disambiguation = true;
+                if (get_file(m.from) == get_file(move.from)) rank_ambig = true;
+                if (get_rank(m.from) == get_rank(move.from)) file_ambig = true;
+            }
+        }
+    } else {
+        // Pawn captures always include file
+        if (get_file(move.from) != get_file(move.to)) {
+            san += (char)('a' + get_file(move.from));
+        }
+    }
+
+    if (needs_disambiguation) {
+        if (!file_ambig) san += (char)('a' + get_file(move.from));
+        else if (!rank_ambig) san += (char)('1' + get_rank(move.from));
+        else {
+            san += (char)('a' + get_file(move.from));
+            san += (char)('1' + get_rank(move.from));
+        }
+    }
+
+    // Capture
+    if (get_piece(move.to) != NONE || move.is_en_passant) {
+        if (pt == PAWN && san.empty()) san += (char)('a' + get_file(move.from)); // Pawn capture needs file if not added yet
+        san += "x";
+    }
+
+    san += square_to_string(move.to);
+
+    if (move.promotion != NONE) {
+        san += "=";
+        san += toupper("pnbrqk"[move.promotion]);
+    }
+
+    // Check/Checkmate
+    // We need to make the move to check this
+    ChessBoard next_board = *this;
+    next_board.make_move(move);
+    if (next_board.is_check(next_board.side_to_move)) {
+        if (next_board.is_checkmate(next_board.side_to_move)) san += "#";
+        else san += "+";
+    }
+
+    return san;
+}
