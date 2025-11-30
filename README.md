@@ -1,14 +1,14 @@
-# [Nome do Projeto]
+# Chess Engine
 
 **Disciplina:** Introdução à Inteligência Artificial  
 **Semestre:** 2025.2  
 **Professor:** André Fonseca  
-# [Nome do Projeto]
+# Chess Engine
 
 **Disciplina:** Introdução à Inteligência Artificial  
 **Semestre:** 2025.2  
 **Professor:** André Fonseca  
-**Turma:** [T03 / T04]
+**Turma:** T04
 
 ## Integrantes do Grupo
 * Enzo Araújo de Souza e Oliveira (20250063249)
@@ -36,6 +36,7 @@ Principais características:
     *   Windows: Baixar do site oficial ou usar gerenciador de pacotes.
 
 ### Compilação
+* Linux/WSL:  
 O projeto utiliza um `Makefile` para facilitar a compilação. No terminal, execute:
 
 ```bash
@@ -45,33 +46,56 @@ git clone [https://github.com/enzoustk/chess-bot]
 # Entre na pasta do projeto
 cd chess-bot
 
-# Instale as dependências
-pip install -r requirements.txt
+# Compilar versão com Interface Gráfica
+make gui
+
+# Compilar versão apenas Console (sem SFML)
+make
 ````
-
-### 2. Como Executar
-
-Execute o comando abaixo no terminal para iniciar o servidor local:
-
-```bash
-# Exemplo para Streamlit
-streamlit run src/app.py
+* Windows:  
+Basta executar o arquivo compile_gui.bat dando dois cliques ou via terminal:
+```DOS
+compile_gui.bat
 ```
 
-Se necessário, especifique a porta ou url de acesso, ex: http://localhost:8501
+### 2. Como Executar
+* Modo Gráfico: Para abrir o jogo com o tabuleiro visual
+
+```bash
+# Linux
+./chess --gui
+
+# Windows
+chess.exe --gui
+```
+* Modo Console: Para jogar via terminal ou testar a lógica:
+```bash
+# Linux
+./chess
+
+# Windows
+chess.exe
+```
 
 ## Estrutura dos Arquivos
 
-[Descreva brevemente a organização das pastas]
-
   * `src/`: Código-fonte da aplicação ou scripts de processamento.
-  * `notebooks/`: Análises exploratórias, testes e prototipagem.
-  * `data/`: Datasets utilizados (se o tamanho permitir o upload).
-  * `assets/`: Imagens, logos ou gráficos de resultados.
+  * `img/pieces/`: Imagens, peças do tabuleiro.
+  * `img/tests/`: Imagens, testes do Engine.
 
 ## Resultados e Demonstração
 
-[Adicione prints da aplicação em execução ou gráficos com os resultados do modelo/agente. Se for uma aplicação Web, coloque um print da interface.]
+Abaixo, uma demonstração da interface gráfica desenvolvida com SFML:  
+* Menu inicial da aplicação:
+![Menu Inicial](img/tests/menu_inicial.png)  
+
+* Menu de escolha para o tempo de partida:
+![Menu Tempo](img/tests/escolhe_tempo.png)
+
+* Print de partidas jogadas:
+![Partida](img/tests/partida2.png)  
+![Partida](img/tests/partida1.png)
+
 
 ## Referências
 
