@@ -99,5 +99,6 @@ Abaixo, uma demonstração da interface gráfica desenvolvida com SFML:
 
 ## Referências
 
-  * [Link para o Dataset original]
-  * [Artigo, Documentação ou Tutorial utilizado como base]
+* [Chess-Programming Wiki](https://www.chessprogramming.org/)
+* [SebLague’s Tiny ChessBot Challenge](https://github.com/SebLague/Tiny-Chess-Bot-Challenge-Results)
+* [Chess-Programming Playlist](https://www.youtube.com/playlist?list=PLOHAn6ngEFJcRgNIbMDMCthLyYV_FM8ly)
