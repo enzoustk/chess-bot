@@ -70,3 +70,25 @@ gui: chess_gui.o chess.o main.o chess_engine.o
 	$(CXX) $(CXXFLAGS) -o $(TARGET) chess.o main.o chess_gui.o chess_engine.o $(LDFLAGS)
 	@echo "Compilado com suporte a interface gráfica!"
 	@echo "Execute com: ./$(TARGET) --gui"
+
+# ========================================
+# Compilação do executável UCI para Lichess
+# ========================================
+
+UCI_TARGET = chess_uci
+UCI_SOURCES = lichess/uci_main.cpp lichess/uci_interface.cpp chess.cpp chess_engine.cpp
+UCI_OBJECTS = lichess/uci_main.o lichess/uci_interface.o chess.o chess_engine.o
+
+# Compilar executável UCI (sem SFML)
+$(UCI_TARGET): lichess/uci_main.o lichess/uci_interface.o chess.o chess_engine.o
+	$(CXX) $(CXXFLAGS) -o $(UCI_TARGET) lichess/uci_main.o lichess/uci_interface.o chess.o chess_engine.o
+	@echo "Executável UCI compilado com sucesso!"
+	@echo "Teste com: echo -e 'uci\nisready\nposition startpos\ngo depth 5\nquit' | ./$(UCI_TARGET)"
+
+# Target para compilar apenas o UCI
+uci: $(UCI_TARGET)
+
+# Limpar também o UCI
+clean:
+	rm -f $(OBJECTS) $(UCI_OBJECTS) $(TARGET) $(UCI_TARGET) chess.exe chess_uci.exe
+

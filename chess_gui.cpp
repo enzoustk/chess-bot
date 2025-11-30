@@ -326,20 +326,22 @@ void ChessGUI::draw_board() {
             int dr = white_bottom ? 7-r : r;
             int df = white_bottom ? f : 7-f;
             rect.setPosition(df*sq_size, dr*sq_size);
-            rect.setFillColor((r+f)%2 ? theme.dark_square : theme.light_square);
+            // [CORREÇÃO] A1 deve ser escura. (0+0)%2 == 0 -> Dark.
+            bool is_dark = ((r+f)%2 == 0);
+            rect.setFillColor(is_dark ? theme.dark_square : theme.light_square);
             window.draw(rect);
             
-            // Optional: Add coordinate labels on the edges
-            if (f == 0) {
+            // Coordenadas
+            if (f == (white_bottom ? 0 : 7)) {
                 sf::Text rank_label(std::to_string(r+1), font, sq_size/4);
-                rank_label.setFillColor((r+f)%2 ? theme.light_square : theme.dark_square);
+                rank_label.setFillColor(is_dark ? theme.light_square : theme.dark_square);
                 rank_label.setPosition(df*sq_size + 2, dr*sq_size + 2);
                 window.draw(rank_label);
             }
-            if (r == 0) {
+            if (r == (white_bottom ? 0 : 7)) {
                 std::string file_char = ""; file_char += (char)('a' + f);
                 sf::Text file_label(file_char, font, sq_size/4);
-                file_label.setFillColor((r+f)%2 ? theme.light_square : theme.dark_square);
+                file_label.setFillColor(is_dark ? theme.light_square : theme.dark_square);
                 file_label.setPosition(df*sq_size + sq_size - 15, dr*sq_size + sq_size - 20);
                 window.draw(file_label);
             }

@@ -54,3 +54,37 @@ if(MSVC)
     )
 endif()
 
+# ========================================
+# Executável UCI para Lichess Bot
+# ========================================
+
+# Arquivos fonte para UCI (sem GUI)
+set(UCI_SOURCES
+    lichess/uci_main.cpp
+    lichess/uci_interface.cpp
+    chess.cpp
+    chess_engine.cpp
+)
+
+# Executável UCI
+add_executable(chess_uci ${UCI_SOURCES})
+
+# Otimizações para UCI
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(chess_uci PRIVATE -march=native)
+endif()
+
+if(MSVC)
+    target_compile_options(chess_uci PRIVATE /O2 /GL)
+    set_target_properties(chess_uci PROPERTIES
+        LINK_FLAGS "/LTCG"
+    )
+endif()
+
+# Para Windows
+if(WIN32)
+    set_target_properties(chess_uci PROPERTIES
+        LINK_FLAGS "-static-libgcc -static-libstdc++"
+    )
+endif()
+

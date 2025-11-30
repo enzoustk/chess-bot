@@ -406,7 +406,19 @@ bool ChessBoard::is_game_over() const { return is_checkmate(side_to_move) || is_
 Square ChessBoard::square_from_string(const std::string& str) { if (str.length() != 2) return NO_SQUARE; return make_square(str[0]-'a', str[1]-'1'); }
 std::string ChessBoard::square_to_string(Square sq) { if (sq == NO_SQUARE) return "-"; std::string s; s += (char)('a' + get_file(sq)); s += (char)('1' + get_rank(sq)); return s; }
 std::string Move::to_string() const { if (from == NO_SQUARE) return "0000"; std::string s = ChessBoard::square_to_string(from) + ChessBoard::square_to_string(to); if (promotion != NONE) s += "nbrq"[promotion-1]; return s; }
-Move Move::from_string(const std::string& s) { return Move(ChessBoard::square_from_string(s.substr(0,2)), ChessBoard::square_from_string(s.substr(2,2))); }
+Move Move::from_string(const std::string& s) { 
+    if (s.length() < 4) return Move();
+    Move m(ChessBoard::square_from_string(s.substr(0,2)), ChessBoard::square_from_string(s.substr(2,2)));
+    if (s.length() > 4) {
+        switch(s[4]) {
+            case 'q': m.promotion = QUEEN; break;
+            case 'r': m.promotion = ROOK; break;
+            case 'b': m.promotion = BISHOP; break;
+            case 'n': m.promotion = KNIGHT; break;
+        }
+    }
+    return m;
+}
 void ChessBoard::print_board() const { std::cout << "\n  a b c d e f g h\n"; for (int r=7; r>=0; r--) { std::cout << r+1 << " "; for (int f=0; f<8; f++) { PieceType pt = get_piece(make_square(f, r)); char c = '.'; if (pt != NONE) { c = "pnbrqk"[pt]; if (get_piece_color(make_square(f, r)) == WHITE) c = toupper(c); } std::cout << c << " "; } std::cout << r+1 << "\n"; } std::cout << "  a b c d e f g h\n"; }
 
 void ChessBoard::initialize_lookup_tables() {
