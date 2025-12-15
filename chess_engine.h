@@ -95,6 +95,9 @@ private:
     int quiescence(ChessBoard& board, int alpha, int beta, int depth_left) const;
     int negamax(ChessBoard& board, int depth, int ply, int alpha, int beta) const;
 
+    int ChessEngine::eval_pawns(const ChessBoard &board) const;
+
+    
     // [NOVO] Armazenar última avaliação
     mutable int last_eval_score;
 

@@ -10,7 +10,16 @@ const int MATE_SCORE = 900000000;
 const int TIME_LIMIT_MS = 1500; 
 
 const int ChessEngine::PIECE_VALUES[7] = { 82, 337, 365, 477, 1025, 20000, 0 };
-const int MOBILITY_BONUS[] = { 0, 4, 3, 2, 1, 0, 0 };
+
+const int MOBILITY_BONUS[] = {
+    0, // Peão
+    4, // Cavalo
+    3, // Bispo
+    2, // Torre
+    1, // Dama
+    0, // Rei
+    0
+};
 
 // --- TABELAS PESTO ---
 const int PST_PAWN[64] = {
@@ -139,6 +148,12 @@ void ChessEngine::order_moves_simple(const ChessBoard& board, std::vector<Move>&
         return score_a > score_b;
     });
 }
+
+int ChessEngine::eval_pawns(const ChessBoard& board) const{
+
+};
+
+
 
 int ChessEngine::evaluate_material(const ChessBoard& board) const {
     int score = 0;
